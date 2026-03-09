@@ -1,11 +1,16 @@
 package influxdb
 
-import "stellar/internal/telemetry/domain"
+import (
+	"time"
+
+	"stellar/internal/telemetry/domain"
+)
 
 type Point struct {
-	Name  string
-	Tags  map[string]string
-	Value float64
+	Name      string
+	Tags      map[string]string
+	Fields    map[string]float64
+	Timestamp time.Time
 }
 
 type PointMapper struct{}
@@ -17,10 +22,14 @@ func NewPointMapper() *PointMapper {
 func (m *PointMapper) Map(measurement domain.Measurement) Point {
 	// TODO: map domain measurements to the real InfluxDB point representation.
 	return Point{
-		Name: measurement.Name,
+		Name: "telemetry",
 		Tags: map[string]string{
-			"asset_id": string(measurement.AssetID),
+			"asset_id": measurement.AssetID.String(),
 		},
-		Value: measurement.Value,
+		Fields: map[string]float64{
+			"setpoint":     measurement.Setpoint,
+			"active_power": measurement.ActivePower,
+		},
+		Timestamp: measurement.CollectedAt,
 	}
 }
