@@ -132,6 +132,28 @@ Endpoints:
 - `GET /healthz`
 - `GET /readyz`
 
+## Docker Compose
+
+To run the Integration Service with InfluxDB and a local Modbus simulator:
+
+```bash
+docker compose up --build
+```
+
+Services started by the compose stack:
+
+- `integration-service`
+- `influxdb`
+- `modbus-simulator`
+
+The compose stack configures the simulator via `MODBUS_SERVER_CONFIG`, including the holding register values for `40100` and `40101`.
+
+Exposed ports:
+
+- `8080`: Integration Service HTTP endpoints
+- `8086`: InfluxDB
+- `5020`: Modbus simulator
+
 ## Testing
 
 Run the full automated test suite with:

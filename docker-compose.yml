@@ -1,0 +1,56 @@
+services:
+  integration-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      - influxdb
+      - modbus-simulator
+    environment:
+      ASSET_ID: "871689260010377213"
+      ASSET_TYPE: "solar_panel"
+      MODBUS_HOST: "modbus-simulator"
+      MODBUS_PORT: "5020"
+      MODBUS_UNIT_ID: "1"
+      MODBUS_REGISTER_TYPE: "holding"
+      MODBUS_SETPOINT_ADDRESS: "40100"
+      MODBUS_ACTIVE_POWER_ADDRESS: "40101"
+      MODBUS_SIGNED_VALUES: "true"
+      POLL_INTERVAL: "1s"
+      INFLUX_URL: "http://influxdb:8086"
+      INFLUX_TOKEN: "dev-token"
+      INFLUX_ORG: "local"
+      INFLUX_BUCKET: "telemetry"
+      HTTP_PORT: "8080"
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  influxdb:
+    image: influxdb:2.7
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: "setup"
+      DOCKER_INFLUXDB_INIT_USERNAME: "admin"
+      DOCKER_INFLUXDB_INIT_PASSWORD: "admin12345"
+      DOCKER_INFLUXDB_INIT_ORG: "local"
+      DOCKER_INFLUXDB_INIT_BUCKET: "telemetry"
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: "dev-token"
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+    restart: unless-stopped
+
+  modbus-simulator:
+    build:
+      context: .
+      dockerfile: docker/modbus-simulator/Dockerfile
+    environment:
+      MODBUS_SERVER_CONFIG: >-
+        {"server":{"listenerAddress":"0.0.0.0","listenerPort":5020,"protocol":"TCP","logging":{"format":"%(asctime)-15s %(threadName)-15s  %(levelname)-8s %(module)-15s:%(lineno)-8s %(message)s","logLevel":"INFO"},"tlsParams":{"description":"path to certificate and private key to enable tls","privateKey":null,"certificate":null}},"registers":{"description":"initial values for the register types","zeroMode":true,"initializeUndefinedRegisters":false,"coils":{"100":false,"101":true},"discreteInput":{"10100":true,"10101":false},"inputRegister":{"30100":"0x7357","30101":"0x0001","30102":"0x0101"},"holdingRegister":{"40100":"0x7357","40101":"0x0001","40102":"0x0101","40103":"0xFFFF","40104":"0x0000","40105":"0xDEAD","40106":"0xBEEF","40110":"0x1010","40120":"0xABCD","40121":"0xEF01","40122":"0x2345","40123":"0x6789"}}}
+    ports:
+      - "5020:5020"
+    restart: unless-stopped
+
+volumes:
+  influxdb-data:
