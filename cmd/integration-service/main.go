@@ -90,6 +90,7 @@ func run(ctx context.Context, cfg config, logger *slog.Logger) error {
 		"http_port", cfg.HTTPPort,
 		"poll_interval", cfg.PollInterval.String(),
 		"influx_url", cfg.Influx.BaseURL,
+		"influx_log_level", cfg.Influx.LogLevel,
 		"influx_write_mode", string(cfg.Influx.WriteMode),
 	)
 
@@ -227,6 +228,11 @@ func loadConfig() (config, error) {
 		return config{}, err
 	}
 
+	influxLogLevel, err := optionalUint("INFLUX_LOG_LEVEL")
+	if err != nil {
+		return config{}, err
+	}
+
 	influxFlushInterval, err := optionalDuration("INFLUX_FLUSH_INTERVAL")
 	if err != nil {
 		return config{}, err
@@ -259,6 +265,7 @@ func loadConfig() (config, error) {
 			Bucket:        influxBucket,
 			Token:         influxToken,
 			Timeout:       defaultInfluxTimeout,
+			LogLevel:      influxLogLevel,
 			WriteMode:     influxWriteMode,
 			BatchSize:     influxBatchSize,
 			FlushInterval: influxFlushInterval,

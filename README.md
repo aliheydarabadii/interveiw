@@ -104,6 +104,7 @@ HTTP_PORT
 Optional Influx write tuning:
 
 ```text
+INFLUX_LOG_LEVEL
 INFLUX_WRITE_MODE
 INFLUX_BATCH_SIZE
 INFLUX_FLUSH_INTERVAL
@@ -126,6 +127,7 @@ export INFLUX_URL=http://127.0.0.1:8086
 export INFLUX_TOKEN=dev-token
 export INFLUX_ORG=local
 export INFLUX_BUCKET=telemetry
+export INFLUX_LOG_LEVEL=0
 export INFLUX_WRITE_MODE=blocking
 export HTTP_PORT=8080
 ```
@@ -134,6 +136,8 @@ Influx write modes:
 
 - `blocking`: write each point synchronously
 - `batch`: buffer writes in the client and flush in batches
+
+`INFLUX_LOG_LEVEL` maps directly to the InfluxDB Go client log level (`uint`).
 
 When `INFLUX_WRITE_MODE=batch`, you can also set:
 

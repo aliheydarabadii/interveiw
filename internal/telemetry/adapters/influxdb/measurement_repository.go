@@ -34,6 +34,7 @@ type Config struct {
 	Bucket        string
 	Token         string
 	Timeout       time.Duration
+	LogLevel      uint
 	WriteMode     WriteMode
 	BatchSize     uint
 	FlushInterval time.Duration
@@ -62,6 +63,7 @@ func NewMeasurementRepositoryWithConfig(config Config, mapper *PointMapper) (*Me
 
 	options := influxdb2.DefaultOptions()
 	options.SetHTTPRequestTimeout(uint(config.Timeout / time.Second))
+	options.SetLogLevel(config.LogLevel)
 	if config.BatchSize > 0 {
 		options.SetBatchSize(config.BatchSize)
 	}
