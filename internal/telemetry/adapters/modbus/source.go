@@ -1,3 +1,4 @@
+// Package modbus implements the Modbus TCP telemetry source adapter.
 package modbus
 
 import (

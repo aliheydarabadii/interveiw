@@ -1,3 +1,4 @@
+// Package influxdb implements the InfluxDB measurement repository adapter.
 package influxdb
 
 import (

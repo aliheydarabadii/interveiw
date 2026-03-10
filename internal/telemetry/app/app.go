@@ -1,3 +1,4 @@
+// Package app wires the telemetry command-side application services.
 package app
 
 import (

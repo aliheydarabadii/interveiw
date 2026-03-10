@@ -1,3 +1,4 @@
+// Package domain defines the telemetry bounded context domain model and rules.
 package domain
 
 import "fmt"

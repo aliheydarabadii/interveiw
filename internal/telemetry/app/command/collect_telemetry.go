@@ -1,3 +1,4 @@
+// Package command contains command-side application use cases for telemetry.
 package command
 
 import (

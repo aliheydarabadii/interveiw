@@ -1,3 +1,4 @@
+// Package ports contains runtime ports for driving the application.
 package ports
 
 import (
