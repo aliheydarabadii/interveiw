@@ -21,6 +21,7 @@ services:
       INFLUX_TOKEN: "dev-token"
       INFLUX_ORG: "local"
       INFLUX_BUCKET: "telemetry"
+      INFLUX_WRITE_MODE: "blocking"
       HTTP_PORT: "8080"
     ports:
       - "8080:8080"

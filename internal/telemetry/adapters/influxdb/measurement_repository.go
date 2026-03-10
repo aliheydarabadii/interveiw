@@ -4,34 +4,47 @@ package influxdb
 import (
 	"context"
 	"fmt"
-	"github.com/influxdata/influxdb-client-go/v2/api/write"
 	"time"
 
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 	"github.com/influxdata/influxdb-client-go/v2/api"
+	"github.com/influxdata/influxdb-client-go/v2/api/write"
 	"stellar/internal/telemetry/domain"
 )
 
 const (
-	defaultBaseURL = "http://127.0.0.1:8086"
-	defaultOrg     = "local"
-	defaultBucket  = "telemetry"
-	defaultToken   = "dev-token"
-	defaultTimeout = 5 * time.Second
+	defaultBaseURL      = "http://127.0.0.1:8086"
+	defaultOrg          = "local"
+	defaultBucket       = "telemetry"
+	defaultToken        = "dev-token"
+	defaultTimeout      = 5 * time.Second
+	defaultCloseTimeout = 5 * time.Second
+)
+
+type WriteMode string
+
+const (
+	WriteModeBlocking WriteMode = "blocking"
+	WriteModeBatch    WriteMode = "batch"
 )
 
 type Config struct {
-	BaseURL string
-	Org     string
-	Bucket  string
-	Token   string
-	Timeout time.Duration
+	BaseURL       string
+	Org           string
+	Bucket        string
+	Token         string
+	Timeout       time.Duration
+	WriteMode     WriteMode
+	BatchSize     uint
+	FlushInterval time.Duration
 }
 
 type MeasurementRepository struct {
-	client influxdb2.Client
-	writer api.WriteAPIBlocking
-	mapper *PointMapper
+	client       influxdb2.Client
+	writer       api.WriteAPIBlocking
+	mapper       *PointMapper
+	writeMode    WriteMode
+	closeTimeout time.Duration
 }
 
 func NewMeasurementRepository(mapper *PointMapper) (*MeasurementRepository, error) {
@@ -49,24 +62,36 @@ func NewMeasurementRepositoryWithConfig(config Config, mapper *PointMapper) (*Me
 
 	options := influxdb2.DefaultOptions()
 	options.SetHTTPRequestTimeout(uint(config.Timeout / time.Second))
+	if config.BatchSize > 0 {
+		options.SetBatchSize(config.BatchSize)
+	}
+	if config.FlushInterval > 0 {
+		options.SetFlushInterval(uint(config.FlushInterval / time.Millisecond))
+	}
 
 	client := influxdb2.NewClientWithOptions(config.BaseURL, config.Token, options)
 	writer := client.WriteAPIBlocking(config.Org, config.Bucket)
+	if config.WriteMode == WriteModeBatch {
+		writer.EnableBatching()
+	}
 
 	return &MeasurementRepository{
-		client: client,
-		writer: writer,
-		mapper: mapper,
+		client:       client,
+		writer:       writer,
+		mapper:       mapper,
+		writeMode:    config.WriteMode,
+		closeTimeout: config.Timeout,
 	}, nil
 }
 
 func DefaultConfig() Config {
 	return Config{
-		BaseURL: defaultBaseURL,
-		Org:     defaultOrg,
-		Bucket:  defaultBucket,
-		Token:   defaultToken,
-		Timeout: defaultTimeout,
+		BaseURL:   defaultBaseURL,
+		Org:       defaultOrg,
+		Bucket:    defaultBucket,
+		Token:     defaultToken,
+		Timeout:   defaultTimeout,
+		WriteMode: WriteModeBlocking,
 	}
 }
 
@@ -81,6 +106,17 @@ func (r *MeasurementRepository) Save(ctx context.Context, measurement domain.Mea
 }
 
 func (r *MeasurementRepository) Close() {
+	if r.writer != nil && r.writeMode == WriteModeBatch {
+		timeout := r.closeTimeout
+		if timeout <= 0 {
+			timeout = defaultCloseTimeout
+		}
+
+		flushCtx, cancel := context.WithTimeout(context.Background(), timeout)
+		_ = r.writer.Flush(flushCtx)
+		cancel()
+	}
+
 	if r.client != nil {
 		r.client.Close()
 	}
@@ -98,6 +134,12 @@ func validateConfig(config Config) error {
 		return fmt.Errorf("influxdb config: %w", ErrEmptyToken)
 	case config.Timeout <= 0:
 		return fmt.Errorf("influxdb config: %w", ErrInvalidTimeout)
+	case config.WriteMode == "":
+		return fmt.Errorf("influxdb config: %w", ErrInvalidWriteMode)
+	case config.WriteMode != WriteModeBlocking && config.WriteMode != WriteModeBatch:
+		return fmt.Errorf("influxdb config: %w: %q", ErrInvalidWriteMode, config.WriteMode)
+	case config.FlushInterval < 0:
+		return fmt.Errorf("influxdb config: flush interval must not be negative")
 	}
 
 	return nil

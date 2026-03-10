@@ -90,6 +90,7 @@ func run(ctx context.Context, cfg config, logger *slog.Logger) error {
 		"http_port", cfg.HTTPPort,
 		"poll_interval", cfg.PollInterval.String(),
 		"influx_url", cfg.Influx.BaseURL,
+		"influx_write_mode", string(cfg.Influx.WriteMode),
 	)
 
 	return runComponents(ctx, logger, httpServer, worker)
@@ -216,6 +217,21 @@ func loadConfig() (config, error) {
 		return config{}, err
 	}
 
+	influxWriteMode, err := optionalInfluxWriteMode("INFLUX_WRITE_MODE", influxdb.WriteModeBlocking)
+	if err != nil {
+		return config{}, err
+	}
+
+	influxBatchSize, err := optionalUint("INFLUX_BATCH_SIZE")
+	if err != nil {
+		return config{}, err
+	}
+
+	influxFlushInterval, err := optionalDuration("INFLUX_FLUSH_INTERVAL")
+	if err != nil {
+		return config{}, err
+	}
+
 	registerMapping, err := domain.NewRegisterMapping(
 		domain.RegisterType(registerTypeValue),
 		setpointAddress,
@@ -238,11 +254,14 @@ func loadConfig() (config, error) {
 			RegisterMapping: registerMapping,
 		},
 		Influx: influxdb.Config{
-			BaseURL: influxURL,
-			Org:     influxOrg,
-			Bucket:  influxBucket,
-			Token:   influxToken,
-			Timeout: defaultInfluxTimeout,
+			BaseURL:       influxURL,
+			Org:           influxOrg,
+			Bucket:        influxBucket,
+			Token:         influxToken,
+			Timeout:       defaultInfluxTimeout,
+			WriteMode:     influxWriteMode,
+			BatchSize:     influxBatchSize,
+			FlushInterval: influxFlushInterval,
 		},
 	}, nil
 }
@@ -350,6 +369,53 @@ func requiredPort(key string) (int, error) {
 	}
 
 	return port, nil
+}
+
+func optionalInfluxWriteMode(key string, fallback influxdb.WriteMode) (influxdb.WriteMode, error) {
+	value, ok := os.LookupEnv(key)
+	if !ok || strings.TrimSpace(value) == "" {
+		return fallback, nil
+	}
+
+	mode := influxdb.WriteMode(strings.TrimSpace(value))
+	switch mode {
+	case influxdb.WriteModeBlocking, influxdb.WriteModeBatch:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("%s must be one of %q or %q", key, influxdb.WriteModeBlocking, influxdb.WriteModeBatch)
+	}
+}
+
+func optionalUint(key string) (uint, error) {
+	value, ok := os.LookupEnv(key)
+	if !ok || strings.TrimSpace(value) == "" {
+		return 0, nil
+	}
+
+	parsed, err := strconv.ParseUint(strings.TrimSpace(value), 10, strconv.IntSize)
+	if err != nil {
+		return 0, fmt.Errorf("parse %s as uint: %w", key, err)
+	}
+
+	return uint(parsed), nil
+}
+
+func optionalDuration(key string) (time.Duration, error) {
+	value, ok := os.LookupEnv(key)
+	if !ok || strings.TrimSpace(value) == "" {
+		return 0, nil
+	}
+
+	duration, err := time.ParseDuration(strings.TrimSpace(value))
+	if err != nil {
+		return 0, fmt.Errorf("parse %s as duration: %w", key, err)
+	}
+
+	if duration < 0 {
+		return 0, fmt.Errorf("%s must not be negative", key)
+	}
+
+	return duration, nil
 }
 
 func httpAddress(port int) string {

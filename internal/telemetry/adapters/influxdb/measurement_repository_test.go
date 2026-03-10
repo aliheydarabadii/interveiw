@@ -48,11 +48,12 @@ func TestMeasurementRepositorySave(t *testing.T) {
 	defer server.Close()
 
 	repository, err := NewMeasurementRepositoryWithConfig(Config{
-		BaseURL: server.URL,
-		Org:     "demo-org",
-		Bucket:  "telemetry",
-		Token:   "demo-token",
-		Timeout: time.Second,
+		BaseURL:   server.URL,
+		Org:       "demo-org",
+		Bucket:    "telemetry",
+		Token:     "demo-token",
+		Timeout:   time.Second,
+		WriteMode: WriteModeBlocking,
 	}, NewPointMapper())
 	if err != nil {
 		t.Fatalf("expected valid repository, got %v", err)
@@ -96,61 +97,93 @@ func TestNewMeasurementRepositoryWithConfigValidation(t *testing.T) {
 		{
 			name: "empty base url rejected",
 			config: Config{
-				Org:     "demo-org",
-				Bucket:  "telemetry",
-				Token:   "demo-token",
-				Timeout: time.Second,
+				Org:       "demo-org",
+				Bucket:    "telemetry",
+				Token:     "demo-token",
+				Timeout:   time.Second,
+				WriteMode: WriteModeBlocking,
 			},
 			wantErr: ErrEmptyBaseURL,
 		},
 		{
 			name: "empty org rejected",
 			config: Config{
-				BaseURL: "http://127.0.0.1:8086",
-				Bucket:  "telemetry",
-				Token:   "demo-token",
-				Timeout: time.Second,
+				BaseURL:   "http://127.0.0.1:8086",
+				Bucket:    "telemetry",
+				Token:     "demo-token",
+				Timeout:   time.Second,
+				WriteMode: WriteModeBlocking,
 			},
 			wantErr: ErrEmptyOrg,
 		},
 		{
 			name: "empty bucket rejected",
 			config: Config{
-				BaseURL: "http://127.0.0.1:8086",
-				Org:     "demo-org",
-				Token:   "demo-token",
-				Timeout: time.Second,
+				BaseURL:   "http://127.0.0.1:8086",
+				Org:       "demo-org",
+				Token:     "demo-token",
+				Timeout:   time.Second,
+				WriteMode: WriteModeBlocking,
 			},
 			wantErr: ErrEmptyBucket,
 		},
 		{
 			name: "empty token rejected",
 			config: Config{
-				BaseURL: "http://127.0.0.1:8086",
-				Org:     "demo-org",
-				Bucket:  "telemetry",
-				Timeout: time.Second,
+				BaseURL:   "http://127.0.0.1:8086",
+				Org:       "demo-org",
+				Bucket:    "telemetry",
+				Timeout:   time.Second,
+				WriteMode: WriteModeBlocking,
 			},
 			wantErr: ErrEmptyToken,
 		},
 		{
 			name: "invalid timeout rejected",
 			config: Config{
-				BaseURL: "http://127.0.0.1:8086",
-				Org:     "demo-org",
-				Bucket:  "telemetry",
-				Token:   "demo-token",
+				BaseURL:   "http://127.0.0.1:8086",
+				Org:       "demo-org",
+				Bucket:    "telemetry",
+				Token:     "demo-token",
+				WriteMode: WriteModeBlocking,
 			},
 			wantErr: ErrInvalidTimeout,
 		},
 		{
+			name: "invalid write mode rejected",
+			config: Config{
+				BaseURL:   "http://127.0.0.1:8086",
+				Org:       "demo-org",
+				Bucket:    "telemetry",
+				Token:     "demo-token",
+				Timeout:   time.Second,
+				WriteMode: WriteMode("invalid"),
+			},
+			wantErr: ErrInvalidWriteMode,
+		},
+		{
 			name: "valid config accepted",
 			config: Config{
-				BaseURL: "http://127.0.0.1:8086",
-				Org:     "demo-org",
-				Bucket:  "telemetry",
-				Token:   "demo-token",
-				Timeout: time.Second,
+				BaseURL:   "http://127.0.0.1:8086",
+				Org:       "demo-org",
+				Bucket:    "telemetry",
+				Token:     "demo-token",
+				Timeout:   time.Second,
+				WriteMode: WriteModeBlocking,
+			},
+			wantErr: nil,
+		},
+		{
+			name: "valid batch config accepted",
+			config: Config{
+				BaseURL:       "http://127.0.0.1:8086",
+				Org:           "demo-org",
+				Bucket:        "telemetry",
+				Token:         "demo-token",
+				Timeout:       time.Second,
+				WriteMode:     WriteModeBatch,
+				BatchSize:     100,
+				FlushInterval: 250 * time.Millisecond,
 			},
 			wantErr: nil,
 		},
@@ -194,11 +227,12 @@ func TestMeasurementRepositorySaveReturnsWriteFailure(t *testing.T) {
 	defer server.Close()
 
 	repository, err := NewMeasurementRepositoryWithConfig(Config{
-		BaseURL: server.URL,
-		Org:     "demo-org",
-		Bucket:  "telemetry",
-		Token:   "demo-token",
-		Timeout: time.Second,
+		BaseURL:   server.URL,
+		Org:       "demo-org",
+		Bucket:    "telemetry",
+		Token:     "demo-token",
+		Timeout:   time.Second,
+		WriteMode: WriteModeBlocking,
 	}, NewPointMapper())
 	if err != nil {
 		t.Fatalf("expected valid repository, got %v", err)
@@ -216,6 +250,55 @@ func TestMeasurementRepositorySaveReturnsWriteFailure(t *testing.T) {
 
 	if !strings.Contains(err.Error(), "write failed") {
 		t.Fatalf("expected write failure in error, got %v", err)
+	}
+}
+
+func TestMeasurementRepositoryBatchModeFlushesOnClose(t *testing.T) {
+	t.Parallel()
+
+	bodyCh := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("expected request body to be readable, got %v", err)
+		}
+
+		bodyCh <- string(body)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	repository, err := NewMeasurementRepositoryWithConfig(Config{
+		BaseURL:       server.URL,
+		Org:           "demo-org",
+		Bucket:        "telemetry",
+		Token:         "demo-token",
+		Timeout:       time.Second,
+		WriteMode:     WriteModeBatch,
+		BatchSize:     10,
+		FlushInterval: time.Hour,
+	}, NewPointMapper())
+	if err != nil {
+		t.Fatalf("expected valid repository, got %v", err)
+	}
+
+	measurement, err := domain.NewMeasurement(domain.DefaultAssetID, 100, 55, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("expected valid measurement, got %v", err)
+	}
+
+	if err := repository.Save(context.Background(), measurement); err != nil {
+		t.Fatalf("expected save to enqueue successfully, got %v", err)
+	}
+
+	repository.Close()
+
+	select {
+	case body := <-bodyCh:
+		assertBodyContains(t, body, "asset_measurements")
+		assertBodyContains(t, body, "asset_id=871689260010377213")
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for batched write flush")
 	}
 }
 
