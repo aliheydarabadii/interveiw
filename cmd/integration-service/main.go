@@ -14,6 +14,7 @@ import (
 	"stellar/internal/telemetry/adapters/modbus"
 	"stellar/internal/telemetry/app"
 	"stellar/internal/telemetry/app/command"
+	"stellar/internal/telemetry/domain"
 	"stellar/internal/telemetry/ports"
 )
 
@@ -23,12 +24,16 @@ func main() {
 
 	addressMapper := modbus.NewAddressMapper()
 	decoder := modbus.NewDecoder()
-	source := modbus.NewSource(addressMapper, decoder)
+	sourceConfig := modbus.DefaultConfig()
+	source, err := modbus.NewSource(sourceConfig, addressMapper, decoder)
+	if err != nil {
+		log.Fatalf("failed to create modbus source: %v", err)
+	}
 
 	pointMapper := influxdb.NewPointMapper()
 	repository := influxdb.NewMeasurementRepository(pointMapper)
 
-	application := app.NewApplication(source, repository)
+	application := app.NewApplication(domain.DefaultAssetID, source, repository)
 
 	healthServer := newHealthServer(":8080")
 	worker := newWorkerLoop(application, 5*time.Second)

@@ -1,16 +1,15 @@
 package modbus
 
-import "stellar/internal/telemetry/domain"
-
 type Decoder struct{}
 
 func NewDecoder() *Decoder {
 	return &Decoder{}
 }
 
-func (d *Decoder) Decode(_ []byte, _ domain.RegisterMapping) (float64, error) {
-	_ = d
+func (d *Decoder) DecodeRegister(raw uint16, signedValues bool) float64 {
+	if signedValues {
+		return float64(int16(raw))
+	}
 
-	// TODO: decode register payloads into typed measurement values.
-	return 0, nil
+	return float64(raw)
 }

@@ -15,13 +15,12 @@ type CollectTelemetry struct {
 }
 
 type TelemetryReading struct {
-	AssetID     domain.AssetID
 	Setpoint    float64
 	ActivePower float64
 }
 
 type TelemetrySource interface {
-	Read(ctx context.Context, collectedAt time.Time) (TelemetryReading, error)
+	Read(ctx context.Context) (TelemetryReading, error)
 }
 
 type MeasurementRepository interface {
@@ -29,25 +28,27 @@ type MeasurementRepository interface {
 }
 
 type CollectTelemetryHandler struct {
+	assetID    domain.AssetID
 	source     TelemetrySource
 	repository MeasurementRepository
 }
 
-func NewCollectTelemetryHandler(source TelemetrySource, repository MeasurementRepository) CollectTelemetryHandler {
+func NewCollectTelemetryHandler(assetID domain.AssetID, source TelemetrySource, repository MeasurementRepository) CollectTelemetryHandler {
 	return CollectTelemetryHandler{
+		assetID:    assetID,
 		source:     source,
 		repository: repository,
 	}
 }
 
 func (h CollectTelemetryHandler) Handle(ctx context.Context, cmd CollectTelemetry) error {
-	reading, err := h.source.Read(ctx, cmd.CollectedAt)
+	reading, err := h.source.Read(ctx)
 	if err != nil {
 		return err
 	}
 
 	measurement, err := domain.NewMeasurement(
-		reading.AssetID,
+		h.assetID,
 		reading.Setpoint,
 		reading.ActivePower,
 		cmd.CollectedAt,

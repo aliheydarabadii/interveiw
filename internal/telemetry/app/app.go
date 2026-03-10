@@ -1,6 +1,9 @@
 package app
 
-import "stellar/internal/telemetry/app/command"
+import (
+	"stellar/internal/telemetry/app/command"
+	"stellar/internal/telemetry/domain"
+)
 
 type Application struct {
 	Commands Commands
@@ -10,10 +13,10 @@ type Commands struct {
 	CollectTelemetry command.CollectTelemetryHandler
 }
 
-func NewApplication(source command.TelemetrySource, repository command.MeasurementRepository) Application {
+func NewApplication(assetID domain.AssetID, source command.TelemetrySource, repository command.MeasurementRepository) Application {
 	return Application{
 		Commands: Commands{
-			CollectTelemetry: command.NewCollectTelemetryHandler(source, repository),
+			CollectTelemetry: command.NewCollectTelemetryHandler(assetID, source, repository),
 		},
 	}
 }

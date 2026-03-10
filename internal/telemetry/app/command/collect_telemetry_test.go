@@ -29,7 +29,6 @@ func TestCollectTelemetryHandlerHandle(t *testing.T) {
 		{
 			name: "valid reading gets saved",
 			reading: TelemetryReading{
-				AssetID:     domain.DefaultAssetID,
 				Setpoint:    100,
 				ActivePower: 80,
 			},
@@ -44,7 +43,6 @@ func TestCollectTelemetryHandlerHandle(t *testing.T) {
 		{
 			name: "invalid reading does not get saved",
 			reading: TelemetryReading{
-				AssetID:     domain.DefaultAssetID,
 				Setpoint:    10,
 				ActivePower: 20,
 			},
@@ -61,7 +59,6 @@ func TestCollectTelemetryHandlerHandle(t *testing.T) {
 		{
 			name: "repository error is returned",
 			reading: TelemetryReading{
-				AssetID:     domain.DefaultAssetID,
 				Setpoint:    100,
 				ActivePower: 80,
 			},
@@ -91,7 +88,7 @@ func TestCollectTelemetryHandlerHandle(t *testing.T) {
 				err: tt.repositoryErr,
 			}
 
-			handler := NewCollectTelemetryHandler(source, repository)
+			handler := NewCollectTelemetryHandler(domain.DefaultAssetID, source, repository)
 			err := handler.Handle(context.Background(), CollectTelemetry{CollectedAt: collectedAt})
 
 			if tt.wantErr == nil {
@@ -112,8 +109,8 @@ func TestCollectTelemetryHandlerHandle(t *testing.T) {
 				t.Fatalf("expected domain error %v, got %v", tt.wantDomainErr, err)
 			}
 
-			if source.calledWith.IsZero() || !source.calledWith.Equal(collectedAt) {
-				t.Fatalf("expected source to be called with %v, got %v", collectedAt, source.calledWith)
+			if source.callCount != 1 {
+				t.Fatalf("expected source to be called once, got %d", source.callCount)
 			}
 
 			if len(repository.saved) != tt.wantSavedCount {
@@ -130,13 +127,13 @@ func TestCollectTelemetryHandlerHandle(t *testing.T) {
 }
 
 type stubTelemetrySource struct {
-	reading    TelemetryReading
-	err        error
-	calledWith time.Time
+	reading   TelemetryReading
+	err       error
+	callCount int
 }
 
-func (s *stubTelemetrySource) Read(_ context.Context, collectedAt time.Time) (TelemetryReading, error) {
-	s.calledWith = collectedAt
+func (s *stubTelemetrySource) Read(_ context.Context) (TelemetryReading, error) {
+	s.callCount++
 	if s.err != nil {
 		return TelemetryReading{}, s.err
 	}
