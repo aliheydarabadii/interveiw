@@ -101,6 +101,14 @@ INFLUX_BUCKET
 HTTP_PORT
 ```
 
+Optional Influx write tuning:
+
+```text
+INFLUX_WRITE_MODE
+INFLUX_BATCH_SIZE
+INFLUX_FLUSH_INTERVAL
+```
+
 Example:
 
 ```bash
@@ -118,13 +126,30 @@ export INFLUX_URL=http://127.0.0.1:8086
 export INFLUX_TOKEN=dev-token
 export INFLUX_ORG=local
 export INFLUX_BUCKET=telemetry
+export INFLUX_WRITE_MODE=blocking
 export HTTP_PORT=8080
 ```
+
+Influx write modes:
+
+- `blocking`: write each point synchronously
+- `batch`: buffer writes in the client and flush in batches
+
+When `INFLUX_WRITE_MODE=batch`, you can also set:
+
+- `INFLUX_BATCH_SIZE`
+- `INFLUX_FLUSH_INTERVAL`
 
 ## Run
 
 ```bash
 go run ./cmd/integration-service
+```
+
+Or with the provided Make target:
+
+```bash
+make run-local
 ```
 
 Endpoints:
@@ -138,6 +163,12 @@ To run the Integration Service with InfluxDB and a local Modbus simulator:
 
 ```bash
 docker compose up --build
+```
+
+Or:
+
+```bash
+make compose-up
 ```
 
 Services started by the compose stack:
@@ -163,3 +194,47 @@ go test ./...
 ```
 
 The test suite covers domain validation, application command orchestration, Modbus adapter behavior, InfluxDB point mapping/repository behavior, and worker loop behavior.
+
+## Load Testing
+
+This service does not expose a public telemetry ingestion endpoint. The worker drives collection internally, so the provided k6 scripts cover:
+
+- HTTP surface load for `/healthz` and `/readyz`
+- direct InfluxDB write load for repository throughput experiments
+
+Run the HTTP load test:
+
+```bash
+k6 run loadtest/k6/service-http.js
+```
+
+Or:
+
+```bash
+make load-http
+```
+
+Run the Influx write load test:
+
+```bash
+INFLUX_URL=http://localhost:8086 \
+INFLUX_ORG=local \
+INFLUX_BUCKET=telemetry \
+INFLUX_TOKEN=dev-token \
+k6 run loadtest/k6/influx-write.js
+```
+
+Or:
+
+```bash
+make load-influx
+```
+
+Useful overrides:
+
+- `BASE_URL`
+- `VUS`
+- `DURATION`
+- `SLEEP_SECONDS`
+- `SETPOINT`
+- `ACTIVE_POWER`
