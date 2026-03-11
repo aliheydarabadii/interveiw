@@ -7,7 +7,7 @@ services:
       influxdb:
         condition: service_healthy
       modbus-server:
-        condition: service_started
+        condition: service_healthy
     environment:
       ASSET_ID: "871689260010377213"
       ASSET_TYPE: "solar_panel"
@@ -62,6 +62,18 @@ services:
       - ./docker/modbus/server_config.json:/server_config.json:ro
     ports:
       - "5020:5020"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import socket; s = socket.create_connection(('127.0.0.1', 5020), 1); s.close()",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
     restart: unless-stopped
 
   prometheus:
