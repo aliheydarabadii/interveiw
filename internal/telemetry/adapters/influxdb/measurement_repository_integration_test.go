@@ -3,6 +3,7 @@ package influxdb_test
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -169,6 +170,80 @@ func (s *MeasurementRepositoryIntegrationTestSuite) TestBatchModeSavePersistsMea
 	s.Assert().Equal(measurement.CollectedAt, record.CollectedAt)
 }
 
+func (s *MeasurementRepositoryIntegrationTestSuite) TestBatchModePersistsMultipleMeasurementsWhenBatchSizeIsReached() {
+	repository, err := influxdb.NewMeasurementRepositoryWithConfig(influxdb.Config{
+		BaseURL:       s.baseURL,
+		Org:           testInfluxOrg,
+		Bucket:        testInfluxBucket,
+		Token:         testInfluxToken,
+		Timeout:       10 * time.Second,
+		WriteMode:     influxdb.WriteModeBatch,
+		BatchSize:     3,
+		FlushInterval: time.Hour,
+	}, influxdb.NewPointMapperWithAssetType(string(domain.SolarPanelType)))
+	s.Require().NoError(err)
+	s.T().Cleanup(func() {
+		s.Require().NoError(repository.Close())
+	})
+
+	baseCollectedAt := time.Date(2026, time.March, 10, 12, 2, 0, 0, time.UTC)
+	measurements := []domain.Measurement{
+		s.newMeasurement("integration-batch-asset-1", 130, 70, baseCollectedAt),
+		s.newMeasurement("integration-batch-asset-2", 140, 80, baseCollectedAt.Add(100*time.Millisecond)),
+		s.newMeasurement("integration-batch-asset-3", 150, 90, baseCollectedAt.Add(200*time.Millisecond)),
+	}
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, len(measurements))
+	for _, measurement := range measurements {
+		wg.Add(1)
+		go func(measurement domain.Measurement) {
+			defer wg.Done()
+			errCh <- repository.Save(context.Background(), measurement)
+		}(measurement)
+	}
+
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		s.Require().NoError(err)
+	}
+
+	var persisted []persistedMeasurement
+	s.Require().Eventually(func() bool {
+		var queryErr error
+		persisted, queryErr = s.queryMeasurementsInRange(
+			context.Background(),
+			baseCollectedAt.Add(-time.Second),
+			baseCollectedAt.Add(time.Second),
+		)
+		if queryErr != nil {
+			return false
+		}
+
+		return len(persisted) == len(measurements)
+	}, 15*time.Second, 500*time.Millisecond, "expected all batched measurements to become queryable")
+
+	s.Require().Len(persisted, len(measurements))
+
+	expected := make(map[string]domain.Measurement, len(measurements))
+	for _, measurement := range measurements {
+		expected[measurement.AssetID.String()] = measurement
+	}
+
+	for _, record := range persisted {
+		want, ok := expected[record.AssetID]
+		s.Require().True(ok, "unexpected asset id %s", record.AssetID)
+
+		s.Equal("asset_measurements", record.MeasurementName)
+		s.Equal(string(domain.SolarPanelType), record.AssetType)
+		s.Equal(want.Setpoint, record.Setpoint)
+		s.Equal(want.ActivePower, record.ActivePower)
+		s.Equal(want.CollectedAt, record.CollectedAt)
+	}
+}
+
 func (s *MeasurementRepositoryIntegrationTestSuite) waitUntilInfluxSetupCompletes() {
 	queryAPI := s.queryClient.QueryAPI(testInfluxOrg)
 
@@ -199,14 +274,32 @@ func (s *MeasurementRepositoryIntegrationTestSuite) queryMeasurements(
 	start time.Time,
 	stop time.Time,
 ) ([]persistedMeasurement, error) {
+	filter := fmt.Sprintf(`|> filter(fn: (r) => r.asset_id == %q)`, assetID)
+	return s.queryMeasurementsWithFilter(ctx, start, stop, filter)
+}
+
+func (s *MeasurementRepositoryIntegrationTestSuite) queryMeasurementsInRange(
+	ctx context.Context,
+	start time.Time,
+	stop time.Time,
+) ([]persistedMeasurement, error) {
+	return s.queryMeasurementsWithFilter(ctx, start, stop, "")
+}
+
+func (s *MeasurementRepositoryIntegrationTestSuite) queryMeasurementsWithFilter(
+	ctx context.Context,
+	start time.Time,
+	stop time.Time,
+	filter string,
+) ([]persistedMeasurement, error) {
 	queryAPI := s.queryClient.QueryAPI(testInfluxOrg)
 	query := fmt.Sprintf(`
 from(bucket: %q)
 	|> range(start: time(v: %q), stop: time(v: %q))
 	|> filter(fn: (r) => r._measurement == %q)
-	|> filter(fn: (r) => r.asset_id == %q)
+	%s
 	|> pivot(rowKey: ["_time", "_measurement", "asset_id", "asset_type"], columnKey: ["_field"], valueColumn: "_value")
-`, testInfluxBucket, start.Format(time.RFC3339Nano), stop.Format(time.RFC3339Nano), "asset_measurements", assetID)
+`, testInfluxBucket, start.Format(time.RFC3339Nano), stop.Format(time.RFC3339Nano), "asset_measurements", filter)
 
 	result, err := queryAPI.Query(ctx, query)
 	if err != nil {
@@ -244,6 +337,14 @@ from(bucket: %q)
 
 	return measurements, nil
 }
+
+func (s *MeasurementRepositoryIntegrationTestSuite) newMeasurement(assetID string, setpoint, activePower float64, collectedAt time.Time) domain.Measurement {
+	measurement, err := domain.NewMeasurement(domain.AssetID(assetID), setpoint, activePower, collectedAt)
+	s.Require().NoError(err)
+
+	return measurement
+}
+
 func toFloat64(value interface{}) (float64, error) {
 	switch typed := value.(type) {
 	case float64:
