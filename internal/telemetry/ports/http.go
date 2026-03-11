@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"sync/atomic"
 	"time"
 )
 
@@ -17,13 +16,13 @@ type HTTPServer interface {
 }
 
 type Server struct {
-	logger  *slog.Logger
-	metrics *Metrics
-	ready   atomic.Bool
-	server  *http.Server
+	logger    *slog.Logger
+	metrics   *Metrics
+	readiness *Readiness
+	server    *http.Server
 }
 
-func NewHTTPServer(addr string, logger *slog.Logger, metrics *Metrics) (*Server, error) {
+func NewHTTPServer(addr string, logger *slog.Logger, metrics *Metrics, readiness *Readiness) (*Server, error) {
 	if addr == "" {
 		return nil, fmt.Errorf("http server address must not be empty")
 	}
@@ -37,12 +36,12 @@ func NewHTTPServer(addr string, logger *slog.Logger, metrics *Metrics) (*Server,
 	}
 
 	server := &Server{
-		logger:  logger,
-		metrics: metrics,
-		server:  &http.Server{Addr: addr},
+		logger:    logger,
+		metrics:   metrics,
+		readiness: readiness,
+		server:    &http.Server{Addr: addr},
 	}
 	server.server.Handler = server.newMux()
-	server.ready.Store(true)
 
 	return server, nil
 }
@@ -52,7 +51,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	go func() {
 		<-ctx.Done()
-		s.ready.Store(false)
+		s.readiness.MarkShuttingDown()
 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
@@ -79,7 +78,7 @@ func (s *Server) Start(ctx context.Context) error {
 }
 
 func (s *Server) readyz(w http.ResponseWriter, _ *http.Request) {
-	if !s.ready.Load() {
+	if !s.readiness.Ready(time.Now().UTC()) {
 		http.Error(w, "not ready", http.StatusServiceUnavailable)
 		return
 	}

@@ -9,17 +9,34 @@ import (
 	"testing"
 	"time"
 
+	"stellar/internal/telemetry/app/command"
+
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	dto "github.com/prometheus/client_model/go"
-	"stellar/internal/telemetry/app/command"
+	"github.com/stretchr/testify/suite"
 )
 
-func TestTickerWorkerStartCreatesCommandWithTimestamp(t *testing.T) {
-	t.Parallel()
+type TickerWorkerTestSuite struct {
+	suite.Suite
+	logger    *slog.Logger
+	metrics   *Metrics
+	readiness *Readiness
+}
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	metrics := NewMetrics()
+func TestTickerWorkerTestSuite(t *testing.T) {
+	suite.Run(t, new(TickerWorkerTestSuite))
+}
 
+func (s *TickerWorkerTestSuite) SetupTest() {
+	s.logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	s.metrics = NewMetrics()
+
+	readiness, err := NewReadiness(time.Minute)
+	s.Require().NoError(err)
+	s.readiness = readiness
+}
+
+func (s *TickerWorkerTestSuite) TestTickerWorkerStartCreatesCommandWithTimestamp() {
 	var (
 		mu       sync.Mutex
 		received command.CollectTelemetry
@@ -39,69 +56,33 @@ func TestTickerWorkerStartCreatesCommandWithTimestamp(t *testing.T) {
 		},
 	}
 
-	worker, err := NewTickerWorker(5*time.Millisecond, handler, logger, metrics, nil)
-	if err != nil {
-		t.Fatalf("expected worker to be created, got %v", err)
-	}
+	worker, err := NewTickerWorker(5*time.Millisecond, handler, s.logger, s.metrics, s.readiness, nil)
+	s.Require().NoError(err)
 
 	before := time.Now().UTC()
-
-	done := make(chan error, 1)
-	go func() {
-		done <- worker.Start(ctx)
-	}()
-
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("expected worker to stop cleanly, got %v", err)
-		}
-	case <-time.After(250 * time.Millisecond):
-		t.Fatal("timed out waiting for worker to stop")
-	}
-
+	s.runWorker(ctx, worker)
 	after := time.Now().UTC()
 
 	mu.Lock()
 	got := received
 	mu.Unlock()
 
-	if got.CollectedAt.IsZero() {
-		t.Fatal("expected collected timestamp to be set")
-	}
+	s.Assert().False(got.CollectedAt.IsZero())
+	s.Assert().Equal(time.UTC, got.CollectedAt.Location())
+	s.Assert().False(got.CollectedAt.Before(before))
+	s.Assert().False(got.CollectedAt.After(after))
 
-	if got.CollectedAt.Location() != time.UTC {
-		t.Fatalf("expected UTC timestamp, got location %v", got.CollectedAt.Location())
-	}
+	s.Assert().Equal(float64(1), testutil.ToFloat64(s.metrics.attemptsCounter))
+	s.Assert().Equal(float64(1), testutil.ToFloat64(s.metrics.successesCounter))
 
-	if got.CollectedAt.Before(before) || got.CollectedAt.After(after) {
-		t.Fatalf("expected collected timestamp between %v and %v, got %v", before, after, got.CollectedAt)
-	}
-
-	if got := testutil.ToFloat64(metrics.attemptsCounter); got != 1 {
-		t.Fatalf("expected 1 attempt, got %v", got)
-	}
-	if got := testutil.ToFloat64(metrics.successesCounter); got != 1 {
-		t.Fatalf("expected 1 success, got %v", got)
-	}
 	wantUnix := float64(got.CollectedAt.Unix())
-	if got := testutil.ToFloat64(metrics.lastAttemptGauge); got != wantUnix {
-		t.Fatalf("expected last attempt gauge %v, got %v", wantUnix, got)
-	}
-	if got := testutil.ToFloat64(metrics.lastSuccessGauge); got != wantUnix {
-		t.Fatalf("expected last success gauge %v, got %v", wantUnix, got)
-	}
-	if got := histogramSampleCount(t, metrics.collectionDuration); got != 1 {
-		t.Fatalf("expected 1 collection duration sample, got %d", got)
-	}
+	s.Assert().Equal(wantUnix, testutil.ToFloat64(s.metrics.lastAttemptGauge))
+	s.Assert().Equal(wantUnix, testutil.ToFloat64(s.metrics.lastSuccessGauge))
+	s.Assert().Equal(uint64(1), histogramSampleCount(s.T(), s.metrics.collectionDuration))
+	s.Assert().True(s.readiness.Ready(time.Now().UTC()))
 }
 
-func TestTickerWorkerStartSurvivesHandlerErrors(t *testing.T) {
-	t.Parallel()
-
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	metrics := NewMetrics()
-
+func (s *TickerWorkerTestSuite) TestTickerWorkerStartSurvivesHandlerErrors() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -117,51 +98,21 @@ func TestTickerWorkerStartSurvivesHandlerErrors(t *testing.T) {
 		},
 	}
 
-	worker, err := NewTickerWorker(5*time.Millisecond, handler, logger, metrics, nil)
-	if err != nil {
-		t.Fatalf("expected worker to be created, got %v", err)
-	}
+	worker, err := NewTickerWorker(5*time.Millisecond, handler, s.logger, s.metrics, s.readiness, nil)
+	s.Require().NoError(err)
 
-	done := make(chan error, 1)
-	go func() {
-		done <- worker.Start(ctx)
-	}()
+	s.runWorker(ctx, worker)
 
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("expected worker to stop cleanly, got %v", err)
-		}
-	case <-time.After(250 * time.Millisecond):
-		t.Fatal("timed out waiting for worker to stop")
-	}
-
-	if got := len(callCh); got < 2 {
-		t.Fatalf("expected handler to be called at least twice despite errors, got %d", got)
-	}
-
-	if got := testutil.ToFloat64(metrics.failuresCounter); got < 2 {
-		t.Fatalf("expected at least 2 failures, got %v", got)
-	}
-	if got := testutil.ToFloat64(metrics.sourceFailuresCounter); got < 2 {
-		t.Fatalf("expected at least 2 source failures, got %v", got)
-	}
-	if got := testutil.ToFloat64(metrics.persistenceFailuresCounter); got != 0 {
-		t.Fatalf("expected 0 persistence failures, got %v", got)
-	}
-	if got := testutil.ToFloat64(metrics.successesCounter); got != 0 {
-		t.Fatalf("expected 0 successes, got %v", got)
-	}
-	if got := histogramSampleCount(t, metrics.collectionDuration); got < 2 {
-		t.Fatalf("expected at least 2 collection duration samples, got %d", got)
-	}
+	s.Assert().GreaterOrEqual(len(callCh), 2)
+	s.Assert().GreaterOrEqual(testutil.ToFloat64(s.metrics.failuresCounter), float64(2))
+	s.Assert().GreaterOrEqual(testutil.ToFloat64(s.metrics.sourceFailuresCounter), float64(2))
+	s.Assert().Equal(float64(0), testutil.ToFloat64(s.metrics.persistenceFailuresCounter))
+	s.Assert().Equal(float64(0), testutil.ToFloat64(s.metrics.successesCounter))
+	s.Assert().GreaterOrEqual(histogramSampleCount(s.T(), s.metrics.collectionDuration), uint64(2))
+	s.Assert().False(s.readiness.Ready(time.Now().UTC()))
 }
 
-func TestTickerWorkerStartCreatesTraceSpan(t *testing.T) {
-	t.Parallel()
-
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	metrics := NewMetrics()
+func (s *TickerWorkerTestSuite) TestTickerWorkerStartCreatesTraceSpan() {
 	tracer, recorder := newTestTracer()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -174,10 +125,18 @@ func TestTickerWorkerStartCreatesTraceSpan(t *testing.T) {
 		},
 	}
 
-	worker, err := NewTickerWorker(5*time.Millisecond, handler, logger, metrics, tracer)
-	if err != nil {
-		t.Fatalf("expected worker to be created, got %v", err)
-	}
+	worker, err := NewTickerWorker(5*time.Millisecond, handler, s.logger, s.metrics, s.readiness, tracer)
+	s.Require().NoError(err)
+
+	s.runWorker(ctx, worker)
+
+	spans := recorder.Ended()
+	s.Require().Len(spans, 1)
+	s.Assert().Equal("telemetry.collect", spans[0].Name())
+}
+
+func (s *TickerWorkerTestSuite) runWorker(ctx context.Context, worker *TickerWorker) {
+	s.T().Helper()
 
 	done := make(chan error, 1)
 	go func() {
@@ -186,19 +145,9 @@ func TestTickerWorkerStartCreatesTraceSpan(t *testing.T) {
 
 	select {
 	case err := <-done:
-		if err != nil {
-			t.Fatalf("expected worker to stop cleanly, got %v", err)
-		}
+		s.Require().NoError(err)
 	case <-time.After(250 * time.Millisecond):
-		t.Fatal("timed out waiting for worker to stop")
-	}
-
-	spans := recorder.Ended()
-	if len(spans) != 1 {
-		t.Fatalf("expected 1 span, got %d", len(spans))
-	}
-	if spans[0].Name() != "telemetry.collect" {
-		t.Fatalf("expected span name %q, got %q", "telemetry.collect", spans[0].Name())
+		s.T().Fatal("timed out waiting for worker to stop")
 	}
 }
 

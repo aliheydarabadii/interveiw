@@ -181,6 +181,12 @@ Endpoints:
 - `GET /readyz`
 - `GET /metrics`
 
+Readiness behavior:
+
+- `/healthz` reports that the process is running
+- `/readyz` becomes healthy only after the service has completed at least one successful end-to-end collection and persistence cycle
+- `/readyz` turns unhealthy again during shutdown or if successful collections go stale beyond the readiness window derived from the poll interval
+
 `/metrics` is exposed with the official Prometheus Go client and includes both service telemetry counters and standard Go/process collectors.
 
 Telemetry histograms exposed for percentile dashboards:

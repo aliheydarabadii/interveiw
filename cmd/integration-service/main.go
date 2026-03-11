@@ -61,6 +61,10 @@ func run(ctx context.Context, cfg config, logger *slog.Logger) (runErr error) {
 	decoder := modbus.NewDecoder()
 	metrics := ports.NewMetrics()
 	tracer := otel.Tracer(serviceName)
+	readiness, err := ports.NewReadiness(cfg.ReadinessStaleAfter)
+	if err != nil {
+		return fmt.Errorf("create readiness: %w", err)
+	}
 
 	source, err := modbus.NewSource(cfg.Modbus, addressMapper, decoder)
 	if err != nil {
@@ -87,12 +91,12 @@ func run(ctx context.Context, cfg config, logger *slog.Logger) (runErr error) {
 
 	application := app.NewApplication(cfg.AssetID, instrumentedSource, instrumentedRepository)
 
-	worker, err := ports.NewTickerWorker(cfg.PollInterval, application.Commands.CollectTelemetry, logger, metrics, tracer)
+	worker, err := ports.NewTickerWorker(cfg.PollInterval, application.Commands.CollectTelemetry, logger, metrics, readiness, tracer)
 	if err != nil {
 		return fmt.Errorf("create worker: %w", err)
 	}
 
-	httpServer, err := ports.NewHTTPServer(httpAddress(cfg.HTTPPort), logger, metrics)
+	httpServer, err := ports.NewHTTPServer(httpAddress(cfg.HTTPPort), logger, metrics, readiness)
 	if err != nil {
 		return fmt.Errorf("create http server: %w", err)
 	}

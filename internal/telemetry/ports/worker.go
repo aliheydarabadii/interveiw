@@ -25,14 +25,15 @@ type collectTelemetryHandler interface {
 }
 
 type TickerWorker struct {
-	logger   *slog.Logger
-	interval time.Duration
-	handler  collectTelemetryHandler
-	metrics  *Metrics
-	tracer   trace.Tracer
+	logger    *slog.Logger
+	interval  time.Duration
+	handler   collectTelemetryHandler
+	metrics   *Metrics
+	readiness *Readiness
+	tracer    trace.Tracer
 }
 
-func NewTickerWorker(interval time.Duration, handler collectTelemetryHandler, logger *slog.Logger, metrics *Metrics, tracer trace.Tracer) (*TickerWorker, error) {
+func NewTickerWorker(interval time.Duration, handler collectTelemetryHandler, logger *slog.Logger, metrics *Metrics, readiness *Readiness, tracer trace.Tracer) (*TickerWorker, error) {
 	if interval <= 0 {
 		return nil, fmt.Errorf("worker interval must be positive")
 	}
@@ -54,11 +55,12 @@ func NewTickerWorker(interval time.Duration, handler collectTelemetryHandler, lo
 	}
 
 	return &TickerWorker{
-		logger:   logger,
-		interval: interval,
-		handler:  handler,
-		metrics:  metrics,
-		tracer:   tracer,
+		logger:    logger,
+		interval:  interval,
+		handler:   handler,
+		metrics:   metrics,
+		readiness: readiness,
+		tracer:    tracer,
 	}, nil
 }
 
@@ -88,6 +90,7 @@ func (w *TickerWorker) Start(ctx context.Context) error {
 			w.metrics.ObserveCollectionDuration(time.Since(startedAt))
 			if err == nil {
 				w.metrics.RecordSuccess(collectedAt)
+				w.readiness.MarkSuccess(collectedAt)
 				span.SetStatus(codes.Ok, "")
 				span.End()
 				continue

@@ -11,16 +11,21 @@ import (
 	"stellar/internal/telemetry/ports"
 )
 
-const defaultInfluxTimeout = 5 * time.Second
+const (
+	defaultInfluxTimeout  = 5 * time.Second
+	minReadinessStaleness = 5 * time.Second
+	readinessMultiplier   = 3
+)
 
 type config struct {
-	AssetID      domain.AssetID
-	AssetType    domain.AssetType
-	PollInterval time.Duration
-	HTTPPort     int
-	Modbus       modbus.Config
-	Influx       influxdb.Config
-	Tracing      ports.TracingConfig
+	AssetID             domain.AssetID
+	AssetType           domain.AssetType
+	PollInterval        time.Duration
+	ReadinessStaleAfter time.Duration
+	HTTPPort            int
+	Modbus              modbus.Config
+	Influx              influxdb.Config
+	Tracing             ports.TracingConfig
 }
 
 type envConfig struct {
@@ -83,10 +88,11 @@ func loadConfig() (config, error) {
 	}
 
 	return config{
-		AssetID:      domain.AssetID(raw.AssetID),
-		AssetType:    domain.AssetType(raw.AssetType),
-		PollInterval: raw.PollInterval,
-		HTTPPort:     raw.HTTPPort,
+		AssetID:             domain.AssetID(raw.AssetID),
+		AssetType:           domain.AssetType(raw.AssetType),
+		PollInterval:        raw.PollInterval,
+		ReadinessStaleAfter: readinessStaleness(raw.PollInterval),
+		HTTPPort:            raw.HTTPPort,
 		Modbus: modbus.Config{
 			Host:            raw.ModbusHost,
 			Port:            raw.ModbusPort,
@@ -121,4 +127,13 @@ func parseInfluxWriteMode(value string) (influxdb.WriteMode, error) {
 	default:
 		return "", fmt.Errorf("INFLUX_WRITE_MODE must be one of %q or %q", influxdb.WriteModeBlocking, influxdb.WriteModeBatch)
 	}
+}
+
+func readinessStaleness(pollInterval time.Duration) time.Duration {
+	staleness := time.Duration(readinessMultiplier) * pollInterval
+	if staleness < minReadinessStaleness {
+		return minReadinessStaleness
+	}
+
+	return staleness
 }
