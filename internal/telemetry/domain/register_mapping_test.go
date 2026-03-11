@@ -1,10 +1,20 @@
 package domain
 
-import "testing"
+import (
+	"testing"
 
-func TestNewRegisterMapping(t *testing.T) {
-	t.Parallel()
+	"github.com/stretchr/testify/suite"
+)
 
+type RegisterMappingTestSuite struct {
+	suite.Suite
+}
+
+func TestRegisterMappingTestSuite(t *testing.T) {
+	suite.Run(t, new(RegisterMappingTestSuite))
+}
+
+func (s *RegisterMappingTestSuite) TestNewRegisterMapping() {
 	tests := []struct {
 		name               string
 		registerType       RegisterType
@@ -55,65 +65,28 @@ func TestNewRegisterMapping(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
-
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
+		s.Run(tt.name, func() {
 			mapping, err := NewRegisterMapping(tt.registerType, tt.setpointAddress, tt.activePowerAddress, tt.signedValues)
 			if tt.wantErrText == "" {
-				if err != nil {
-					t.Fatalf("expected no error, got %v", err)
-				}
-
-				if mapping.RegisterType != tt.registerType {
-					t.Fatalf("expected register type %q, got %q", tt.registerType, mapping.RegisterType)
-				}
-
-				if mapping.SetpointAddress != tt.setpointAddress {
-					t.Fatalf("expected setpoint address %d, got %d", tt.setpointAddress, mapping.SetpointAddress)
-				}
-
-				if mapping.ActivePowerAddress != tt.activePowerAddress {
-					t.Fatalf("expected active power address %d, got %d", tt.activePowerAddress, mapping.ActivePowerAddress)
-				}
-
-				if mapping.SignedValues != tt.signedValues {
-					t.Fatalf("expected signed values %t, got %t", tt.signedValues, mapping.SignedValues)
-				}
-
+				s.Require().NoError(err)
+				s.Equal(tt.registerType, mapping.RegisterType)
+				s.Equal(tt.setpointAddress, mapping.SetpointAddress)
+				s.Equal(tt.activePowerAddress, mapping.ActivePowerAddress)
+				s.Equal(tt.signedValues, mapping.SignedValues)
 				return
 			}
 
-			if err == nil {
-				t.Fatalf("expected error %q, got nil", tt.wantErrText)
-			}
-
-			if err.Error() != tt.wantErrText {
-				t.Fatalf("expected error %q, got %q", tt.wantErrText, err.Error())
-			}
+			s.Require().Error(err)
+			s.Equal(tt.wantErrText, err.Error())
 		})
 	}
 }
 
-func TestNewDefaultRegisterMapping(t *testing.T) {
-	t.Parallel()
-
+func (s *RegisterMappingTestSuite) TestNewDefaultRegisterMapping() {
 	mapping := NewDefaultRegisterMapping()
 
-	if mapping.RegisterType != HoldingRegister {
-		t.Fatalf("expected register type %q, got %q", HoldingRegister, mapping.RegisterType)
-	}
-
-	if mapping.SetpointAddress != 40100 {
-		t.Fatalf("expected setpoint address %d, got %d", 40100, mapping.SetpointAddress)
-	}
-
-	if mapping.ActivePowerAddress != 40101 {
-		t.Fatalf("expected active power address %d, got %d", 40101, mapping.ActivePowerAddress)
-	}
-
-	if !mapping.SignedValues {
-		t.Fatal("expected signed values to be true")
-	}
+	s.Equal(HoldingRegister, mapping.RegisterType)
+	s.Equal(uint16(40100), mapping.SetpointAddress)
+	s.Equal(uint16(40101), mapping.ActivePowerAddress)
+	s.True(mapping.SignedValues)
 }

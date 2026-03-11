@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/suite"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
@@ -12,63 +13,52 @@ import (
 	"stellar/internal/telemetry/domain"
 )
 
-func TestInstrumentTelemetrySourceObservesReadDuration(t *testing.T) {
-	t.Parallel()
+type InstrumentationTestSuite struct {
+	suite.Suite
+	metrics  *Metrics
+	tracer   trace.Tracer
+	recorder *tracetest.SpanRecorder
+}
 
-	metrics := NewMetrics()
-	tracer, recorder := newTestTracer()
+func TestInstrumentationTestSuite(t *testing.T) {
+	suite.Run(t, new(InstrumentationTestSuite))
+}
+
+func (s *InstrumentationTestSuite) SetupTest() {
+	s.metrics = NewMetrics()
+	s.tracer, s.recorder = newTestTracer()
+}
+
+func (s *InstrumentationTestSuite) TestInstrumentTelemetrySourceObservesReadDuration() {
 	source := InstrumentTelemetrySource(stubTelemetrySource{
 		reading: command.TelemetryReading{
 			Setpoint:    100,
 			ActivePower: 50,
 		},
-	}, metrics, tracer)
+	}, s.metrics, s.tracer)
 
 	_, err := source.Read(context.Background())
-	if err != nil {
-		t.Fatalf("expected read to succeed, got %v", err)
-	}
+	s.Require().NoError(err)
 
-	if got := histogramSampleCount(t, metrics.sourceReadDuration); got != 1 {
-		t.Fatalf("expected 1 source read duration sample, got %d", got)
-	}
+	s.Equal(uint64(1), histogramSampleCount(s.T(), s.metrics.sourceReadDuration))
 
-	spans := recorder.Ended()
-	if len(spans) != 1 {
-		t.Fatalf("expected 1 span, got %d", len(spans))
-	}
-	if spans[0].Name() != "telemetry.source.read" {
-		t.Fatalf("expected span name %q, got %q", "telemetry.source.read", spans[0].Name())
-	}
+	spans := s.recorder.Ended()
+	s.Require().Len(spans, 1)
+	s.Equal("telemetry.source.read", spans[0].Name())
 }
 
-func TestInstrumentMeasurementRepositoryObservesPersistenceDuration(t *testing.T) {
-	t.Parallel()
-
-	metrics := NewMetrics()
-	tracer, recorder := newTestTracer()
-	repository := InstrumentMeasurementRepository(stubMeasurementRepository{}, metrics, tracer)
+func (s *InstrumentationTestSuite) TestInstrumentMeasurementRepositoryObservesPersistenceDuration() {
+	repository := InstrumentMeasurementRepository(stubMeasurementRepository{}, s.metrics, s.tracer)
 
 	measurement, err := domain.NewMeasurement(domain.DefaultAssetID, 100, 50, time.Now().UTC())
-	if err != nil {
-		t.Fatalf("expected measurement to be valid, got %v", err)
-	}
+	s.Require().NoError(err)
 
-	if err := repository.Save(context.Background(), measurement); err != nil {
-		t.Fatalf("expected save to succeed, got %v", err)
-	}
+	s.Require().NoError(repository.Save(context.Background(), measurement))
+	s.Equal(uint64(1), histogramSampleCount(s.T(), s.metrics.persistenceDuration))
 
-	if got := histogramSampleCount(t, metrics.persistenceDuration); got != 1 {
-		t.Fatalf("expected 1 persistence duration sample, got %d", got)
-	}
-
-	spans := recorder.Ended()
-	if len(spans) != 1 {
-		t.Fatalf("expected 1 span, got %d", len(spans))
-	}
-	if spans[0].Name() != "telemetry.persistence.save" {
-		t.Fatalf("expected span name %q, got %q", "telemetry.persistence.save", spans[0].Name())
-	}
+	spans := s.recorder.Ended()
+	s.Require().Len(spans, 1)
+	s.Equal("telemetry.persistence.save", spans[0].Name())
 }
 
 type stubTelemetrySource struct {

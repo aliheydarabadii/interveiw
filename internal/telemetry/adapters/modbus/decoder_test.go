@@ -1,10 +1,25 @@
 package modbus
 
-import "testing"
+import (
+	"testing"
 
-func TestDecoderDecodeRegister(t *testing.T) {
-	t.Parallel()
+	"github.com/stretchr/testify/suite"
+)
 
+type DecoderTestSuite struct {
+	suite.Suite
+	decoder *Decoder
+}
+
+func TestDecoderTestSuite(t *testing.T) {
+	suite.Run(t, new(DecoderTestSuite))
+}
+
+func (s *DecoderTestSuite) SetupTest() {
+	s.decoder = NewDecoder()
+}
+
+func (s *DecoderTestSuite) TestDecodeRegister() {
 	tests := []struct {
 		name         string
 		raw          uint16
@@ -25,17 +40,9 @@ func TestDecoderDecodeRegister(t *testing.T) {
 		},
 	}
 
-	decoder := NewDecoder()
-
 	for _, tt := range tests {
-		tt := tt
-
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			if got := decoder.DecodeRegister(tt.raw, tt.signedValues); got != tt.want {
-				t.Fatalf("expected %v, got %v", tt.want, got)
-			}
+		s.Run(tt.name, func() {
+			s.Equal(tt.want, s.decoder.DecodeRegister(tt.raw, tt.signedValues))
 		})
 	}
 }

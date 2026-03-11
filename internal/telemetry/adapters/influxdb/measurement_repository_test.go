@@ -2,7 +2,6 @@ package influxdb
 
 import (
 	"context"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,17 +10,22 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/suite"
 	"stellar/internal/telemetry/domain"
 )
 
-func TestMeasurementRepositorySave(t *testing.T) {
-	t.Parallel()
+type MeasurementRepositoryTestSuite struct {
+	suite.Suite
+}
 
+func TestMeasurementRepositoryTestSuite(t *testing.T) {
+	suite.Run(t, new(MeasurementRepositoryTestSuite))
+}
+
+func (s *MeasurementRepositoryTestSuite) TestMeasurementRepositorySave() {
 	collectedAt := time.Date(2026, time.March, 10, 10, 0, 0, 123, time.UTC)
 	measurement, err := domain.NewMeasurement(domain.DefaultAssetID, 100, 55, collectedAt)
-	if err != nil {
-		t.Fatalf("expected valid measurement, got %v", err)
-	}
+	s.Require().NoError(err)
 
 	var (
 		gotMethod        string
@@ -33,9 +37,7 @@ func TestMeasurementRepositorySave(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, readErr := io.ReadAll(r.Body)
-		if readErr != nil {
-			t.Fatalf("expected request body to be readable, got %v", readErr)
-		}
+		s.Require().NoError(readErr)
 
 		gotMethod = r.Method
 		gotPath = r.URL.Path
@@ -55,43 +57,23 @@ func TestMeasurementRepositorySave(t *testing.T) {
 		Timeout:   time.Second,
 		WriteMode: WriteModeBlocking,
 	}, NewPointMapper())
-	if err != nil {
-		t.Fatalf("expected valid repository, got %v", err)
-	}
+	s.Require().NoError(err)
 
-	if err := repository.Save(context.Background(), measurement); err != nil {
-		t.Fatalf("expected save to succeed, got %v", err)
-	}
-	if err := repository.Close(); err != nil {
-		t.Fatalf("expected close to succeed, got %v", err)
-	}
+	s.Require().NoError(repository.Save(context.Background(), measurement))
+	s.Require().NoError(repository.Close())
 
-	if gotMethod != http.MethodPost {
-		t.Fatalf("expected method %q, got %q", http.MethodPost, gotMethod)
-	}
-
-	if gotPath != "/api/v2/write" {
-		t.Fatalf("expected path %q, got %q", "/api/v2/write", gotPath)
-	}
-
-	if gotQuery != "bucket=telemetry&org=demo-org&precision=ns" {
-		t.Fatalf("expected query %q, got %q", "bucket=telemetry&org=demo-org&precision=ns", gotQuery)
-	}
-
-	if gotAuthorization != "Token demo-token" {
-		t.Fatalf("expected authorization %q, got %q", "Token demo-token", gotAuthorization)
-	}
-
-	assertBodyContains(t, gotBody, "asset_measurements")
-	assertBodyContains(t, gotBody, "asset_id=871689260010377213")
-	assertBodyContains(t, gotBody, "setpoint=100")
-	assertBodyContains(t, gotBody, "active_power=55")
-	assertBodyContains(t, gotBody, strconv.FormatInt(collectedAt.UnixNano(), 10))
+	s.Equal(http.MethodPost, gotMethod)
+	s.Equal("/api/v2/write", gotPath)
+	s.Equal("bucket=telemetry&org=demo-org&precision=ns", gotQuery)
+	s.Equal("Token demo-token", gotAuthorization)
+	s.assertBodyContains(gotBody, "asset_measurements")
+	s.assertBodyContains(gotBody, "asset_id=871689260010377213")
+	s.assertBodyContains(gotBody, "setpoint=100")
+	s.assertBodyContains(gotBody, "active_power=55")
+	s.assertBodyContains(gotBody, strconv.FormatInt(collectedAt.UnixNano(), 10))
 }
 
-func TestNewMeasurementRepositoryWithConfigValidation(t *testing.T) {
-	t.Parallel()
-
+func (s *MeasurementRepositoryTestSuite) TestNewMeasurementRepositoryWithConfigValidation() {
 	tests := []struct {
 		name    string
 		config  Config
@@ -174,7 +156,6 @@ func TestNewMeasurementRepositoryWithConfigValidation(t *testing.T) {
 				Timeout:   time.Second,
 				WriteMode: WriteModeBlocking,
 			},
-			wantErr: nil,
 		},
 		{
 			name: "valid batch config accepted",
@@ -188,45 +169,27 @@ func TestNewMeasurementRepositoryWithConfigValidation(t *testing.T) {
 				BatchSize:     100,
 				FlushInterval: 250 * time.Millisecond,
 			},
-			wantErr: nil,
 		},
 	}
 
 	for _, tt := range tests {
-		tt := tt
-
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
+		s.Run(tt.name, func() {
 			repository, err := NewMeasurementRepositoryWithConfig(tt.config, NewPointMapper())
 
 			if tt.wantErr == nil {
-				if err != nil {
-					t.Fatalf("expected no error, got %v", err)
-				}
-				if repository == nil {
-					t.Fatal("expected repository to be created")
-				}
-				if closeErr := repository.Close(); closeErr != nil {
-					t.Fatalf("expected close to succeed, got %v", closeErr)
-				}
+				s.Require().NoError(err)
+				s.NotNil(repository)
+				s.Require().NoError(repository.Close())
 				return
 			}
 
-			if err == nil {
-				t.Fatalf("expected error %v, got nil", tt.wantErr)
-			}
-
-			if !errors.Is(err, tt.wantErr) {
-				t.Fatalf("expected error %v, got %v", tt.wantErr, err)
-			}
+			s.Require().Error(err)
+			s.ErrorIs(err, tt.wantErr)
 		})
 	}
 }
 
-func TestMeasurementRepositorySaveReturnsWriteFailure(t *testing.T) {
-	t.Parallel()
-
+func (s *MeasurementRepositoryTestSuite) TestMeasurementRepositorySaveReturnsWriteFailure() {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "write failed", http.StatusBadRequest)
 	}))
@@ -240,37 +203,22 @@ func TestMeasurementRepositorySaveReturnsWriteFailure(t *testing.T) {
 		Timeout:   time.Second,
 		WriteMode: WriteModeBlocking,
 	}, NewPointMapper())
-	if err != nil {
-		t.Fatalf("expected valid repository, got %v", err)
-	}
+	s.Require().NoError(err)
 
 	measurement, err := domain.NewMeasurement(domain.DefaultAssetID, 100, 55, time.Now().UTC())
-	if err != nil {
-		t.Fatalf("expected valid measurement, got %v", err)
-	}
+	s.Require().NoError(err)
 
 	err = repository.Save(context.Background(), measurement)
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if closeErr := repository.Close(); closeErr != nil {
-		t.Fatalf("expected close to succeed, got %v", closeErr)
-	}
-
-	if !strings.Contains(err.Error(), "write failed") {
-		t.Fatalf("expected write failure in error, got %v", err)
-	}
+	s.Require().Error(err)
+	s.Require().NoError(repository.Close())
+	s.Contains(err.Error(), "write failed")
 }
 
-func TestMeasurementRepositoryBatchModeSaveFlushesOnInterval(t *testing.T) {
-	t.Parallel()
-
+func (s *MeasurementRepositoryTestSuite) TestMeasurementRepositoryBatchModeSaveFlushesOnInterval() {
 	bodyCh := make(chan string, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Fatalf("expected request body to be readable, got %v", err)
-		}
+		s.Require().NoError(err)
 
 		bodyCh <- string(body)
 		w.WriteHeader(http.StatusNoContent)
@@ -287,36 +235,26 @@ func TestMeasurementRepositoryBatchModeSaveFlushesOnInterval(t *testing.T) {
 		BatchSize:     10,
 		FlushInterval: 10 * time.Millisecond,
 	}, NewPointMapper())
-	if err != nil {
-		t.Fatalf("expected valid repository, got %v", err)
-	}
+	s.Require().NoError(err)
 	defer func() {
-		if closeErr := repository.Close(); closeErr != nil {
-			t.Fatalf("expected close to succeed, got %v", closeErr)
-		}
+		s.Require().NoError(repository.Close())
 	}()
 
 	measurement, err := domain.NewMeasurement(domain.DefaultAssetID, 100, 55, time.Now().UTC())
-	if err != nil {
-		t.Fatalf("expected valid measurement, got %v", err)
-	}
+	s.Require().NoError(err)
 
-	if err := repository.Save(context.Background(), measurement); err != nil {
-		t.Fatalf("expected save to flush successfully, got %v", err)
-	}
+	s.Require().NoError(repository.Save(context.Background(), measurement))
 
 	select {
 	case body := <-bodyCh:
-		assertBodyContains(t, body, "asset_measurements")
-		assertBodyContains(t, body, "asset_id=871689260010377213")
+		s.assertBodyContains(body, "asset_measurements")
+		s.assertBodyContains(body, "asset_id=871689260010377213")
 	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for batched write flush")
+		s.T().Fatal("timed out waiting for batched write flush")
 	}
 }
 
-func TestMeasurementRepositoryBatchModeCloseReturnsFlushFailure(t *testing.T) {
-	t.Parallel()
-
+func (s *MeasurementRepositoryTestSuite) TestMeasurementRepositoryBatchModeCloseReturnsFlushFailure() {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "write failed", http.StatusBadRequest)
 	}))
@@ -332,14 +270,10 @@ func TestMeasurementRepositoryBatchModeCloseReturnsFlushFailure(t *testing.T) {
 		BatchSize:     10,
 		FlushInterval: time.Hour,
 	}, NewPointMapper())
-	if err != nil {
-		t.Fatalf("expected valid repository, got %v", err)
-	}
+	s.Require().NoError(err)
 
 	measurement, err := domain.NewMeasurement(domain.DefaultAssetID, 100, 55, time.Now().UTC())
-	if err != nil {
-		t.Fatalf("expected valid measurement, got %v", err)
-	}
+	s.Require().NoError(err)
 
 	saveErrCh := make(chan error, 1)
 	go func() {
@@ -349,30 +283,20 @@ func TestMeasurementRepositoryBatchModeCloseReturnsFlushFailure(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	closeErr := repository.Close()
-	if closeErr == nil {
-		t.Fatal("expected close to return flush failure, got nil")
-	}
-	if !strings.Contains(closeErr.Error(), "write failed") {
-		t.Fatalf("expected close error to contain write failure, got %v", closeErr)
-	}
+	s.Require().Error(closeErr)
+	s.Contains(closeErr.Error(), "write failed")
 
 	select {
 	case saveErr := <-saveErrCh:
-		if saveErr == nil {
-			t.Fatal("expected save to return flush failure, got nil")
-		}
-		if !strings.Contains(saveErr.Error(), "write failed") {
-			t.Fatalf("expected save error to contain write failure, got %v", saveErr)
-		}
+		s.Require().Error(saveErr)
+		s.Contains(saveErr.Error(), "write failed")
 	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for save to return")
+		s.T().Fatal("timed out waiting for save to return")
 	}
 }
 
-func assertBodyContains(t *testing.T, body, want string) {
-	t.Helper()
-
-	if !strings.Contains(body, want) {
-		t.Fatalf("expected body to contain %q, got %q", want, body)
-	}
+func (s *MeasurementRepositoryTestSuite) assertBodyContains(body, want string) {
+	s.T().Helper()
+	s.Contains(body, want)
+	s.True(strings.Contains(body, want))
 }

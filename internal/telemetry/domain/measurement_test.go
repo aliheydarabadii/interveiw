@@ -4,13 +4,24 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/suite"
 )
 
-func TestNewMeasurement(t *testing.T) {
-	t.Parallel()
+type MeasurementTestSuite struct {
+	suite.Suite
+	collectedAt time.Time
+}
 
-	collectedAt := time.Date(2026, time.March, 9, 12, 0, 0, 0, time.UTC)
+func TestMeasurementTestSuite(t *testing.T) {
+	suite.Run(t, new(MeasurementTestSuite))
+}
 
+func (s *MeasurementTestSuite) SetupTest() {
+	s.collectedAt = time.Date(2026, time.March, 9, 12, 0, 0, 0, time.UTC)
+}
+
+func (s *MeasurementTestSuite) TestNewMeasurement() {
 	tests := []struct {
 		name        string
 		setpoint    float64
@@ -39,52 +50,25 @@ func TestNewMeasurement(t *testing.T) {
 			name:        "valid measurement accepted",
 			setpoint:    10,
 			activePower: 8,
-			wantErr:     nil,
 		},
 	}
 
 	for _, tt := range tests {
-		tt := tt
-
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			measurement, err := NewMeasurement(DefaultAssetID, tt.setpoint, tt.activePower, collectedAt)
+		s.Run(tt.name, func() {
+			measurement, err := NewMeasurement(DefaultAssetID, tt.setpoint, tt.activePower, s.collectedAt)
 			if tt.wantErr == nil {
-				if err != nil {
-					t.Fatalf("expected no error, got %v", err)
-				}
-
-				if measurement.AssetID != DefaultAssetID {
-					t.Fatalf("expected asset ID %q, got %q", DefaultAssetID, measurement.AssetID)
-				}
-
-				if measurement.Setpoint != tt.setpoint {
-					t.Fatalf("expected setpoint %v, got %v", tt.setpoint, measurement.Setpoint)
-				}
-
-				if measurement.ActivePower != tt.activePower {
-					t.Fatalf("expected active power %v, got %v", tt.activePower, measurement.ActivePower)
-				}
-
-				if !measurement.CollectedAt.Equal(collectedAt) {
-					t.Fatalf("expected collected at %v, got %v", collectedAt, measurement.CollectedAt)
-				}
-
+				s.Require().NoError(err)
+				s.Equal(DefaultAssetID, measurement.AssetID)
+				s.Equal(tt.setpoint, measurement.Setpoint)
+				s.Equal(tt.activePower, measurement.ActivePower)
+				s.True(measurement.CollectedAt.Equal(s.collectedAt))
 				return
 			}
 
-			if err == nil {
-				t.Fatalf("expected error %v, got nil", tt.wantErr)
-			}
-
-			if !errors.Is(err, ErrInvalidMeasurement) {
-				t.Fatalf("expected invalid measurement error, got %v", err)
-			}
-
-			if !errors.Is(err, tt.wantErr) {
-				t.Fatalf("expected error %v, got %v", tt.wantErr, err)
-			}
+			s.Require().Error(err)
+			s.ErrorIs(err, ErrInvalidMeasurement)
+			s.ErrorIs(err, tt.wantErr)
+			s.True(errors.Is(err, tt.wantErr))
 		})
 	}
 }

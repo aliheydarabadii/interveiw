@@ -4,24 +4,30 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"errors"
-	"io"
 	"net"
-	"strings"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/suite"
 	"stellar/internal/telemetry/domain"
 )
 
-func TestNewSource(t *testing.T) {
-	t.Parallel()
+type SourceTestSuite struct {
+	suite.Suite
+	validMapping domain.RegisterMapping
+}
 
+func TestSourceTestSuite(t *testing.T) {
+	suite.Run(t, new(SourceTestSuite))
+}
+
+func (s *SourceTestSuite) SetupTest() {
 	validMapping, err := domain.NewRegisterMapping(domain.HoldingRegister, 40100, 40101, true)
-	if err != nil {
-		t.Fatalf("expected valid register mapping, got %v", err)
-	}
+	s.Require().NoError(err)
+	s.validMapping = validMapping
+}
 
+func (s *SourceTestSuite) TestNewSource() {
 	tests := []struct {
 		name    string
 		config  Config
@@ -32,7 +38,7 @@ func TestNewSource(t *testing.T) {
 			config: Config{
 				Port:            502,
 				UnitID:          1,
-				RegisterMapping: validMapping,
+				RegisterMapping: s.validMapping,
 			},
 			wantErr: ErrEmptyHost,
 		},
@@ -41,7 +47,7 @@ func TestNewSource(t *testing.T) {
 			config: Config{
 				Host:            "127.0.0.1",
 				UnitID:          1,
-				RegisterMapping: validMapping,
+				RegisterMapping: s.validMapping,
 			},
 			wantErr: ErrZeroPort,
 		},
@@ -50,7 +56,7 @@ func TestNewSource(t *testing.T) {
 			config: Config{
 				Host:            "127.0.0.1",
 				Port:            502,
-				RegisterMapping: validMapping,
+				RegisterMapping: s.validMapping,
 			},
 			wantErr: ErrZeroUnitID,
 		},
@@ -117,53 +123,32 @@ func TestNewSource(t *testing.T) {
 				Host:            "127.0.0.1",
 				Port:            502,
 				UnitID:          1,
-				RegisterMapping: validMapping,
+				RegisterMapping: s.validMapping,
 			},
-			wantErr: nil,
 		},
 	}
 
 	for _, tt := range tests {
-		tt := tt
-
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
+		s.Run(tt.name, func() {
 			source, err := NewSource(tt.config, NewAddressMapper(), NewDecoder())
-
 			if tt.wantErr == nil {
-				if err != nil {
-					t.Fatalf("expected no error, got %v", err)
-				}
-				if source == nil {
-					t.Fatal("expected source to be created")
-				}
+				s.Require().NoError(err)
+				s.NotNil(source)
 				return
 			}
 
-			if err == nil {
-				t.Fatalf("expected error %v, got nil", tt.wantErr)
-			}
-
-			if !errors.Is(err, tt.wantErr) {
-				t.Fatalf("expected error %v, got %v", tt.wantErr, err)
-			}
+			s.Require().Error(err)
+			s.ErrorIs(err, tt.wantErr)
 		})
 	}
 }
 
-func TestSourceRead(t *testing.T) {
-	t.Parallel()
-
+func (s *SourceTestSuite) TestSourceRead() {
 	source, err := NewSource(DefaultConfig(), NewAddressMapper(), NewDecoder())
-	if err != nil {
-		t.Fatalf("expected valid source, got %v", err)
-	}
+	s.Require().NoError(err)
 
 	plan, err := source.mapper.Map(source.config.RegisterMapping)
-	if err != nil {
-		t.Fatalf("expected valid read plan, got %v", err)
-	}
+	s.Require().NoError(err)
 
 	registers := make([]uint16, int(plan.quantity))
 	registers[plan.setpointIndex] = 100
@@ -172,61 +157,29 @@ func TestSourceRead(t *testing.T) {
 	conn := newFakeConn(buildReadHoldingResponse(1, source.config.UnitID, registers))
 
 	source.dialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-		if network != "tcp" {
-			t.Fatalf("expected tcp network, got %q", network)
-		}
-		if address != net.JoinHostPort(source.config.Host, "5020") {
-			t.Fatalf("unexpected dial address %q", address)
-		}
+		s.Equal("tcp", network)
+		s.Equal(net.JoinHostPort(source.config.Host, "5020"), address)
 		return conn, nil
 	}
 
 	reading, err := source.Read(context.Background())
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
+	s.Require().NoError(err)
 
-	if reading.Setpoint != 100 {
-		t.Fatalf("expected setpoint 100, got %v", reading.Setpoint)
-	}
-
-	if reading.ActivePower != 55 {
-		t.Fatalf("expected active power 55, got %v", reading.ActivePower)
-	}
-
-	if !conn.closed {
-		t.Fatal("expected connection to be closed")
-	}
-
-	if conn.deadline.IsZero() {
-		t.Fatal("expected connection deadline to be set")
-	}
-
-	if len(conn.written) != 12 {
-		t.Fatalf("expected 12-byte modbus request, got %d bytes", len(conn.written))
-	}
-
-	if functionCode := conn.written[7]; functionCode != readHoldingRegisters {
-		t.Fatalf("expected function code %d, got %d", readHoldingRegisters, functionCode)
-	}
-
-	if quantity := binary.BigEndian.Uint16(conn.written[10:12]); quantity != plan.quantity {
-		t.Fatalf("expected quantity %d, got %d", plan.quantity, quantity)
-	}
+	s.Equal(float64(100), reading.Setpoint)
+	s.Equal(float64(55), reading.ActivePower)
+	s.True(conn.closed)
+	s.False(conn.deadline.IsZero())
+	s.Len(conn.written, 12)
+	s.Equal(byte(readHoldingRegisters), conn.written[7])
+	s.Equal(plan.quantity, binary.BigEndian.Uint16(conn.written[10:12]))
 }
 
-func TestSourceReadUnexpectedTransactionID(t *testing.T) {
-	t.Parallel()
-
+func (s *SourceTestSuite) TestSourceReadUnexpectedTransactionID() {
 	source, err := NewSource(DefaultConfig(), NewAddressMapper(), NewDecoder())
-	if err != nil {
-		t.Fatalf("expected valid source, got %v", err)
-	}
+	s.Require().NoError(err)
 
 	plan, err := source.mapper.Map(source.config.RegisterMapping)
-	if err != nil {
-		t.Fatalf("expected valid read plan, got %v", err)
-	}
+	s.Require().NoError(err)
 
 	registers := make([]uint16, int(plan.quantity))
 	conn := newFakeConn(buildReadHoldingResponse(99, source.config.UnitID, registers))
@@ -236,31 +189,20 @@ func TestSourceReadUnexpectedTransactionID(t *testing.T) {
 	}
 
 	_, err = source.Read(context.Background())
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-
-	if !strings.Contains(err.Error(), "unexpected transaction id") {
-		t.Fatalf("expected unexpected transaction id error, got %v", err)
-	}
+	s.Require().Error(err)
+	s.Contains(err.Error(), "unexpected transaction id")
 }
 
-func TestDeadlineFromContextUsesContextDeadline(t *testing.T) {
-	t.Parallel()
-
+func (s *SourceTestSuite) TestDeadlineFromContextUsesContextDeadline() {
 	expected := time.Now().Add(2 * time.Second).Round(0)
 	ctx, cancel := context.WithDeadline(context.Background(), expected)
 	defer cancel()
 
 	got := deadlineFromContext(ctx, defaultIOTimeout)
-	if !got.Equal(expected) {
-		t.Fatalf("expected deadline %v, got %v", expected, got)
-	}
+	s.True(got.Equal(expected))
 }
 
-func TestDeadlineFromContextUsesFallback(t *testing.T) {
-	t.Parallel()
-
+func (s *SourceTestSuite) TestDeadlineFromContextUsesFallback() {
 	before := time.Now()
 	got := deadlineFromContext(context.Background(), defaultIOTimeout)
 	after := time.Now()
@@ -268,40 +210,26 @@ func TestDeadlineFromContextUsesFallback(t *testing.T) {
 	min := before.Add(defaultIOTimeout)
 	max := after.Add(defaultIOTimeout + 100*time.Millisecond)
 
-	if got.Before(min) || got.After(max) {
-		t.Fatalf("expected deadline between %v and %v, got %v", min, max, got)
-	}
+	s.False(got.Before(min))
+	s.False(got.After(max))
 }
 
-func TestWriteAllWritesEntirePayload(t *testing.T) {
-	t.Parallel()
-
+func (s *SourceTestSuite) TestWriteAllWritesEntirePayload() {
 	conn := &fakeConn{writeChunkSize: 3}
 	payload := []byte{1, 2, 3, 4, 5, 6, 7}
 
-	if err := writeAll(conn, payload); err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-
-	if !bytes.Equal(conn.written, payload) {
-		t.Fatalf("expected payload %v, got %v", payload, conn.written)
-	}
+	s.Require().NoError(writeAll(conn, payload))
+	s.True(bytes.Equal(conn.written, payload))
 }
 
-func TestNextTransactionIDWrapsToOne(t *testing.T) {
-	t.Parallel()
-
+func (s *SourceTestSuite) TestNextTransactionIDWrapsToOne() {
 	source, err := NewSource(DefaultConfig(), NewAddressMapper(), NewDecoder())
-	if err != nil {
-		t.Fatalf("expected valid source, got %v", err)
-	}
+	s.Require().NoError(err)
 
 	source.transactionID = ^uint16(0)
 
 	got := source.nextTransactionID()
-	if got != 1 {
-		t.Fatalf("expected wrapped transaction id 1, got %d", got)
-	}
+	s.Equal(uint16(1), got)
 }
 
 func buildReadHoldingResponse(transactionID uint16, unitID uint8, registers []uint16) []byte {
@@ -358,33 +286,13 @@ func (c *fakeConn) Close() error {
 	return nil
 }
 
-func (c *fakeConn) LocalAddr() net.Addr {
-	return fakeAddr("local")
-}
-
-func (c *fakeConn) RemoteAddr() net.Addr {
-	return fakeAddr("remote")
-}
-
-func (c *fakeConn) SetDeadline(t time.Time) error {
-	c.deadline = t
-	return nil
-}
-
-func (c *fakeConn) SetReadDeadline(t time.Time) error {
-	c.deadline = t
-	return nil
-}
-
-func (c *fakeConn) SetWriteDeadline(t time.Time) error {
-	c.deadline = t
-	return nil
-}
+func (c *fakeConn) LocalAddr() net.Addr                { return fakeAddr("local") }
+func (c *fakeConn) RemoteAddr() net.Addr               { return fakeAddr("remote") }
+func (c *fakeConn) SetDeadline(t time.Time) error      { c.deadline = t; return nil }
+func (c *fakeConn) SetReadDeadline(t time.Time) error  { c.deadline = t; return nil }
+func (c *fakeConn) SetWriteDeadline(t time.Time) error { c.deadline = t; return nil }
 
 type fakeAddr string
 
-func (a fakeAddr) Network() string { return "tcp" }
+func (a fakeAddr) Network() string { return string(a) }
 func (a fakeAddr) String() string  { return string(a) }
-
-var _ net.Conn = (*fakeConn)(nil)
-var _ io.Reader = (*bytes.Reader)(nil)

@@ -3,40 +3,29 @@ package modbus
 import (
 	"testing"
 
+	"github.com/stretchr/testify/suite"
 	"stellar/internal/telemetry/domain"
 )
 
-func TestAddressMapperMap(t *testing.T) {
-	t.Parallel()
+type AddressMapperTestSuite struct {
+	suite.Suite
+}
 
+func TestAddressMapperTestSuite(t *testing.T) {
+	suite.Run(t, new(AddressMapperTestSuite))
+}
+
+func (s *AddressMapperTestSuite) TestAddressMapperMap() {
 	mapping, err := domain.NewRegisterMapping(domain.HoldingRegister, 40100, 40101, true)
-	if err != nil {
-		t.Fatalf("expected valid register mapping, got %v", err)
-	}
+	s.Require().NoError(err)
 
 	mapper := NewAddressMapper()
 	plan, err := mapper.Map(mapping)
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
+	s.Require().NoError(err)
 
-	if plan.startAddress != 99 {
-		t.Fatalf("expected start address %d, got %d", 99, plan.startAddress)
-	}
-
-	if plan.quantity != 2 {
-		t.Fatalf("expected quantity %d, got %d", 2, plan.quantity)
-	}
-
-	if plan.setpointIndex != 0 {
-		t.Fatalf("expected setpoint index %d, got %d", 0, plan.setpointIndex)
-	}
-
-	if plan.activePowerIndex != 1 {
-		t.Fatalf("expected active power index %d, got %d", 1, plan.activePowerIndex)
-	}
-
-	if !plan.signedValues {
-		t.Fatal("expected signed values to be true")
-	}
+	s.Equal(uint16(99), plan.startAddress)
+	s.Equal(uint16(2), plan.quantity)
+	s.Equal(0, plan.setpointIndex)
+	s.Equal(1, plan.activePowerIndex)
+	s.True(plan.signedValues)
 }
