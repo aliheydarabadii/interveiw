@@ -5,6 +5,7 @@ go 1.25.0
 require github.com/influxdata/influxdb-client-go/v2 v2.14.0
 
 require (
+	github.com/caarlos0/env/v11 v11.4.0
 	github.com/prometheus/client_golang v1.19.1
 	github.com/prometheus/client_model v0.5.0
 	github.com/stretchr/testify v1.11.1
